@@ -87,7 +87,7 @@ class HyperLogLog(object):
         self.alpha = self._get_alpha(self.p)
         self.max_rank = self._hash_range_bit - self.p
 
-    def update(self, b):
+    def update(self, b, weight = 1):
         '''
         Update the HyperLogLog with a new data value in bytes.
         The value will be hashed using the hash function specified by
@@ -121,25 +121,41 @@ class HyperLogLog(object):
         reg_index = hv & (self.m - 1)
         # Get the rest of the hash
         bits = hv >> self.p
+        if weight != 1:
+            bits = int(bits * (1/weight))
         # Update the register
-        self.reg[reg_index] = max(self.reg[reg_index], self._get_rank(bits))
+        self.reg[reg_index] = max(self.reg[reg_index], self._get_rank(bits, weight))
 
-    def count(self):
+    def combine(self, use_weights = False):
+        new_m = self.m
+        new_reg = self.reg
+        num_zero = new_m - np.count_nonzero(new_reg)
+        while num_zero != 0 and new_m > 16 and use_weights:
+            new_m = int(new_m / 2)
+            new_reg = np.maximum(new_reg[:new_m], new_reg[new_m:])
+            num_zero = new_m- np.count_nonzero(new_reg)
+        if num_zero != 0:
+            warnings.warn(("Probably a very bad estimate will happen because we don't have enough values"))
+        p = int(np.log2(new_m))
+        alpha = self._get_alpha(p)
+        # Use HyperLogLog estimation function
+        e = alpha * float(new_m ** 2) / np.sum(2.0**(-new_reg))
+        return (e, alpha, new_m, num_zero, p)
+
+    def count(self, use_weights = False):
         '''
         Estimate the cardinality of the data values seen so far.
 
         Returns:
             int: The estimated cardinality.
-        '''
-        # Use HyperLogLog estimation function
-        e = self.alpha * float(self.m ** 2) / np.sum(2.0**(-self.reg))
+        '''    
         # Small range correction
-        small_range_threshold = (5.0 / 2.0) * self.m
+        e, alpha, new_m, num_zero, p = self.combine(use_weights)
+        small_range_threshold = (5.0 / 2.0) * new_m
         if abs(e-small_range_threshold)/small_range_threshold < 0.15:
           warnings.warn(("Warning: estimate is close to error correction threshold. "
                         +"Output may not satisfy HyperLogLog accuracy guarantee."))
-        if e <= small_range_threshold:
-            num_zero = self.m - np.count_nonzero(self.reg)
+        if e <= small_range_threshold and not use_weights:
             return self._linearcounting(num_zero)
         # Normal range, no correction
         if e <= (1.0 / 30.0) * (1 << 32):
@@ -215,11 +231,13 @@ class HyperLogLog(object):
             self.m == other.m and \
             np.array_equal(self.reg, other.reg)
 
-    def _get_rank(self, bits):
+    def _get_rank(self, bits, weight):
         rank = self.max_rank - _bit_length(bits) + 1
         if rank <= 0:
-            raise ValueError("Hash value overflow, maximum size is %d\
+            if weight == 1:
+              raise ValueError("Hash value overflow, maximum size is %d\
                     bits" % self.max_rank)
+            rank = 0
         return rank
 
     def _linearcounting(self, num_zero):
@@ -336,16 +354,15 @@ class HyperLogLogPlusPlus(HyperLogLog):
         nearest_neighbors = np.argsort((e - estimate_vector)**2)[:6]
         return np.mean(bias_vector[nearest_neighbors])
 
-    def count(self):
-        num_zero = self.m - np.count_nonzero(self.reg)
-        if num_zero > 0:
+    def count(self, use_weights = False):
+        e, alpha, new_m, num_zero, p = self.combine(use_weights)
+        if num_zero > 0 and not use_weights:
             # linear counting
             lc = self._linearcounting(num_zero)
-            if lc <= self._get_threshold(self.p):
+            if lc <= self._get_threshold(p):
                 return lc
         # Use HyperLogLog estimation function
-        e = self.alpha * float(self.m ** 2) / np.sum(2.0**(-self.reg))
-        if e <= 5 * self.m:
-            return e - self._estimate_bias(e, self.p)
+        if e <= 5 * new_m:
+            return e - self._estimate_bias(e, p)
         else:
             return e

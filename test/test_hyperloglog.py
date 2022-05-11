@@ -37,6 +37,24 @@ class TestHyperLogLog(unittest.TestCase):
         h.update(0x000000f5)
         self.assertEqual(h.reg[5], self._class._hash_range_bit - 4 - 3)
 
+    def test_update_with_weight(self):
+        h = self._class(4, hashfunc=fake_hash_func)
+        h.update(0b00001111)
+        self.assertEqual(h.reg[0b1111], self._class._hash_range_bit - 3)
+        h.update(0b01001110)
+        self.assertEqual(h.reg[0b1110], self._class._hash_range_bit - 6)
+        h.update(0b01001101, 2)
+        self.assertEqual(h.reg[0b1101], self._class._hash_range_bit - 5)
+        h.update(0b01001011, .5)
+        self.assertEqual(h.reg[0b1011], self._class._hash_range_bit - 8)
+
+    def test_update_with_weight_big_num(self):
+        h = self._class(4, hashfunc=fake_hash_func)
+        h.update(0xfffffff1, .5)
+        self.assertEqual(h.reg[1], 0)
+        h.update(0xfffffff2, 2)
+        self.assertEqual(h.reg[2], 2)
+
     def test_merge(self):
         h1 = self._class(4, hashfunc=fake_hash_func)
         h2 = self._class(4, hashfunc=fake_hash_func)
@@ -150,6 +168,11 @@ class TestHyperLogLogPlusPlus(TestHyperLogLog):
         self.assertEqual(h.reg[1], 1)
         h.update(0x000000f5)
         self.assertEqual(h.reg[5], self._class._hash_range_bit - 4 - 3)
+
+    def test_update_with_weight_big_num(self):
+        h = self._class(4, hashfunc=fake_hash_func)
+        h.update(0xfffffffffffffff1, .5)
+        self.assertEqual(h.reg[1], 0)
 
     def test_merge(self):
         h1 = self._class(4, hashfunc=fake_hash_func)
