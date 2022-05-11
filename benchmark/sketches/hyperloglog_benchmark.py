@@ -20,16 +20,33 @@ def run_perf(card, p):
     return duration
 
 
-def run_acc(size, seed, p, weight):
+def run_acc_weighted(size, seed, p, weight_high, weight_low):
     logging.info("HyperLogLog using p = %d " % p)
     h = HyperLogLogPlusPlus(p=p)
-    s = set()
+    mapping = {}
     random.seed(seed)
     for i in range(size):
-        v = int_bytes(random.randint(1, size))
-        h.update(v, weight)
-        s.add(v)
-    perr = abs(float(len(s)*weight) - h.count(weight != 1)) / float(len(s)*weight)
+        rand = random.randint(1, size)
+        v = int_bytes(rand)
+        rand_weight = mapping.get(v, random.uniform(weight_low, weight_high) ** 2)
+        h.update(v, rand_weight)
+        mapping[v] = rand_weight
+    actual_weight = sum(mapping.values())
+    perr = abs(actual_weight - h.count(True)) / actual_weight
+    return perr
+
+def run_acc_unweighted(size, seed, p):
+    logging.info("HyperLogLog using p = %d " % p)
+    h = HyperLogLogPlusPlus(p=p)
+    mapping = {}
+    random.seed(seed)
+    for i in range(size):
+        rand = random.randint(1, size)
+        v = int_bytes(rand)
+        h.update(v)
+        mapping[v] = 1
+    actual_weight = sum(mapping.values())
+    perr = abs(actual_weight - h.count(False)) / actual_weight
     return perr
 
 ps = range(4, 17)
@@ -40,8 +57,9 @@ card = 5000
 #run_times = [run_perf(card, p) for p in ps]
 
 logging.info("> Running accuracy tests")
-size = 15
-errs = [run_acc(size, 1, p, .1) for p in ps]
+size = 500000
+errs_weighted = [run_acc_weighted(size, 1, p, 15, .1) for p in ps]
+errs_unweighted = [run_acc_unweighted(size, 1, p) for p in ps]
 
 logging.info("> Plotting result")
 import matplotlib
@@ -56,7 +74,8 @@ ax.ticklabel_format(axis='y', style='sci', scilimits=(-2,2))
 ax.set_title("HyperLogLog performance")
 ax.grid()
 ax = axe[0]
-ax.plot(ps, errs, marker='+')
+ax.plot(ps, errs_weighted, marker='+')
+ax.plot(ps, errs_unweighted, marker='+')
 ax.set_xlabel("P values")
 ax.set_ylabel("Error rate in cardinality estimation")
 ax.set_title("HyperLogLog accuracy")
